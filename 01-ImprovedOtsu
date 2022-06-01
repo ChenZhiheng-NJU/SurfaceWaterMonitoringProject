@@ -1,0 +1,106 @@
+import ee
+import numpy as np
+
+ee.Authenticate()
+ee.Initialize()
+
+def otsu(histogram):
+
+    counts = np.array(ee.Array(ee.Dictionary(histogram).get('histogram')).getInfo())
+    means = np.array(ee.Array(ee.Dictionary(histogram).get('bucketMeans')).getInfo())
+    size = counts.shape[0]
+    total = np.sum(counts)
+    sum = np.sum(counts*means)
+    mean = sum / total
+
+    values = []
+    maxValue = -1000000
+    maxValueIndex = 0
+    
+    for i in range(size-1):
+        aCounts = counts[:i+1]
+        aMeans = means[:i+1]
+
+        bCounts = counts[i+1:]
+        bMeans = means[i+1:]
+
+        aCount = np.sum(aCounts)
+        bCount = np.sum(bCounts)
+
+        aMean = np.sum(aCounts*aMeans) / aCount
+        bMean = np.sum(bCounts*bMeans) / bCount
+        
+        value = aCount * ((aMean - mean)**2) + bCount * ((bMean - mean)**2)
+
+        if value > maxValue:
+            maxValue = value
+            maxValueIndex = i
+
+    return means[maxValueIndex]
+
+regions = ee.FeatureCollection('projects/ee-czh/assets/MiniSubRegions_ALL')
+sampleRegions = ee.FeatureCollection("projects/ee-czh/assets/SampleRegions_L2")
+cjzxy = ee.FeatureCollection("projects/ee-czh/assets/CJZXY")
+
+st1 = ee.ImageCollection("COPERNICUS/S1_GRD")
+st2 = ee.ImageCollection("COPERNICUS/S2")
+vegetationrPercent = ee.Image('users/czh1609040222/Sentinel2_NDVI')
+vegetation = vegetationrPercent.lt(0.3).selfMask()
+
+orbit_numbers_st1 = [157, 84, 11, 113, 40, 142, 69, 171]
+orbit_numbers_st2 = [18, 118, 75, 32, 132, 89, 46]
+years = [2016, 2017, 2018, 2019, 2020, 2021]
+
+imgs1 = st1.filterBounds(cjzxy).filter(ee.Filter.eq('relativeOrbitNumber_start', 113)).filterDate('2021-01-01','2021-12-31')
+imgs_index1 = imgs1.reduceColumns(ee.Reducer.toList(), ["system:index"]).get("list").getInfo()
+
+imgs2 = st2.filterBounds(cjzxy).filter(ee.Filter.eq('SENSING_ORBIT_NUMBER', 132)).filterDate('2021-01-01','2021-12-31')
+imgs_index2 = imgs2.reduceColumns(ee.Reducer.toList(), ["system:index"]).get("list").getInfo()
+
+imgs_date1 = []
+for img_index1 in imgs_index1:
+    imgs_date1.append(img_index1[17:25])
+
+imgs_date1 = list(set(imgs_date1))
+imgs_date1.sort()
+
+
+imgs_date2 = []
+for img_index2 in imgs_index2:
+    imgs_date2.append(img_index2[:8])
+
+imgs_date2 = list(set(imgs_date2))
+imgs_date2.sort()
+
+imgs_date = list(set(imgs_date1) & set(imgs_date2))
+imgs_date.sort()
+
+for i in range(5):
+    startdate = f'{imgs_date1[i][:4]}-{imgs_date1[i][4:6]}-{imgs_date1[i][6:]}'
+    enddate = f'{imgs_date1[i+1][:4]}-{imgs_date1[i+1][4:6]}-{imgs_date1[i+1][6:]}'
+    imgs = st1.filterBounds(cjzxy).filter(ee.Filter.eq('relativeOrbitNumber_start', 113)).filterDate(startdate,enddate)
+
+    footprints = imgs.reduceColumns(ee.Reducer.toList(), ["system:footprint"]).get("list").getInfo()
+    subRegionsInImgIndex = []
+    for footprint in footprints:
+        img_coverage = ee.Geometry.Polygon(footprint['coordinates'])
+        subRegionsInImgIndex += regions.filterBounds(img_coverage).reduceColumns(ee.Reducer.toList(), ["index"]).get("list").getInfo()
+    
+    subRegionsInImgIndex = list(set(subRegionsInImgIndex))
+    img = imgs.select('VV').mosaic()
+    thresholds = []
+    for subRegionIndex in subRegionsInImgIndex:
+        subRegion = regions.filter(ee.Filter.eq("index", subRegionIndex)).geometry()
+
+        histogram = img.clip(subRegion).reduceRegion(
+            reducer=ee.Reducer.histogram(100).combine('mean', None, True).combine('variance', None, True),
+            geometry=subRegion,
+            scale=10,
+            bestEffort=True)
+        try:
+            threshold = otsu(histogram.get('VV_histogram'))
+            thresholds.append(threshold)            
+        except:
+            pass
+    
+    print(np.mean(thresholds))

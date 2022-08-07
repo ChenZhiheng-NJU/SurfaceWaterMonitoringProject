@@ -1,0 +1,117 @@
+import os
+import gdal
+import numpy as np
+
+
+def save_geotiff_file(array, fileName, projection, geoTransform):
+    row, col = array.shape
+    data = gdal.GetDriverByName('GTiff').Create(fileName, col, row, 1, gdal.GDT_Byte)
+    data.GetRasterBand(1).WriteArray(array)
+    data.SetProjection(projection)
+    data.SetGeoTransform(geoTransform)
+    data.FlushCache()
+    data = None
+
+def fillLineRight(seedX,seedY,img,travelMatrix):
+    row, col = img.shape
+    count = 0
+    color = img[seedX,seedY]
+    while(seedY != col-1):
+        seedY += 1
+        if img[seedX,seedY] == color:
+            # print(seedX, seedY, img[seedX, seedY], 'right')
+            travelMatrix[seedX,seedY] = 1
+            count += 1
+        else:break
+    # print(count,'right')
+    return count
+
+def fillLineLeft(seedX,seedY,img,travelMatrix):
+    count = 0
+    color = img[seedX,seedY]
+    while(seedY != 0):
+        seedY -= 1
+        if img[seedX,seedY] == color:
+            # print(seedX, seedY, img[seedX, seedY], 'left')
+            travelMatrix[seedX,seedY] = 1
+            count += 1
+        else:break
+    # print(count,'left')
+    return count
+
+#-----------------------------------
+
+def newSeedSearch(seedX,xLeft,xRight,img,travelMatrix,seedList,seedColor):
+    for i in range(xLeft,xRight,1):
+        if img[seedX,i] == seedColor and img[seedX,i+1] != seedColor and travelMatrix[seedX,i] == 0:
+            seedList.append([seedX,i])
+            # print(seedX,i,'seed')
+    if img[seedX,xRight] == seedColor and travelMatrix[seedX,xRight] == 0:
+        seedList.append([seedX,xRight])
+        # print(seedX,xRight,'seed')
+    return seedList
+
+#-----------------------------------
+def scanLineSeedFill(i,j,seedList,arcList,img,travelMatrix):
+    row, col = img.shape
+    seedList.append([i,j]) # 将该节点压栈
+    while(seedList):
+        seedX,seedY = seedList.pop()
+        travelMatrix[seedX,seedY] = 1
+        seedColor = img[seedX,seedY]
+
+        if seedY > 0: # 如果种子节点不在左边界，则向左搜索。
+            count = fillLineLeft(seedX, seedY, img, travelMatrix)
+            xLeft = seedY - count
+        elif seedY == 0:
+            xLeft = seedY
+
+        if seedY < col - 1: # 如果种子节点不在右边界，则向右搜索
+            count = fillLineRight(seedX,seedY,img,travelMatrix)
+            xRight = seedY + count
+        elif seedY == col - 1:
+            xRight = seedY
+
+        #------------开始向上下两行扫描-----------------
+
+        if seedX > 0: # 如果种子节点不在上边界，则向上搜索，寻找新的种子节点
+            newSeedSearch(seedX - 1,xLeft,xRight,img,travelMatrix,seedList,seedColor)
+        if seedX < row - 1: # 如果种子节点不在下边界，则向下搜素，寻找新的种子节点
+            newSeedSearch(seedX + 1,xLeft,xRight,img,travelMatrix,seedList,seedColor)
+        # print(seedList)
+        arcList.append([seedX,xLeft,xRight])
+
+    sum = 0
+    for k in range(len(arcList)):
+        a,b,c = arcList[k]
+        sum += c - b + 1
+    # print(sum)
+
+    if sum < 25 and seedColor == 0:
+        for k in range(len(arcList)):
+            a,b,c = arcList[k]
+            img[a,b:c+1] = 1
+    arcList.clear()
+    return arcList
+
+paths = os.listdir(r"")
+outputFolder = r""
+
+for path in paths:
+    img = gdal.Open(r'{}'.format(path))
+    proj = img.GetProjection()
+    gtran = img.GetGeoTransform()
+    water = np.array(img.ReadAsArray(), np.float)
+
+    row, col = water.shape
+    seedList = []
+    arcList = []
+    travelMatrix = np.zeros([row, col])
+
+    for i in range(row):
+        for j in range(col):
+            if travelMatrix[i][j] == 0:
+                scanLineSeedFill(i, j, seedList, arcList, water, travelMatrix)
+
+    save_geotiff_file(water, outputFolder + '\{}'.format(path), proj, gtran)
+    print(path)

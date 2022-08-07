@@ -1,0 +1,71 @@
+import gdal
+import numpy as np
+import matplotlib.pyplot as plt
+import numpy.ma as ma
+
+def save_geotiff_file(array, fileName, projection, geoTransform):
+    row, col = array.shape
+    data = gdal.GetDriverByName('GTiff').Create(fileName, col, row, 1, gdal.GDT_Byte)
+    data.GetRasterBand(1).WriteArray(array)
+    data.SetProjection(projection)
+    data.SetGeoTransform(geoTransform)
+    data.FlushCache()
+    data = None
+
+dsm = gdal.Open(r"").ReadAsArray()
+waterMask = gdal.Open(r"")
+proj = waterMask.GetProjection()
+gtran = waterMask.GetGeoTransform()
+waterMask = waterMask.ReadAsArray()
+
+dsm = np.array(dsm)
+waterMask = np.array(waterMask)
+dsm = dsm * waterMask
+
+
+kernel = np.array([
+    [1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1],
+])
+print(kernel.shape)
+
+
+row, col = dsm.shape
+print(row, col)
+matrix = np.zeros([row+18, col+18])
+matrix[9:-9, 9:-9] = dsm
+
+threshold = 10
+for i in range(9, row+9):
+    for j in range(9, col+9):
+        if matrix[i, j] != 0:
+            localMatrix = matrix[i-9:i+10, j-9:j+10] * kernel
+            maskedLocalMartix = ma.masked_where(localMatrix==0, localMatrix)
+            maxValue = np.max(maskedLocalMartix)
+            minValue = np.min(maskedLocalMartix)
+
+            if maxValue - minValue > threshold:
+                localMask = np.array(matrix[i-9:i+10, j-9:j+10] < (minValue + threshold), np.int)
+                matrix[i - 9:i + 10, j - 9:j + 10] = localMask * matrix[i - 9:i + 10, j - 9:j + 10]
+
+                print(maxValue, minValue, maxValue - minValue)
+
+result = matrix[9:-9, 9:-9]
+save_geotiff_file(result, r"", proj, gtran)
